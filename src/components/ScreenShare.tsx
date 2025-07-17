@@ -161,11 +161,13 @@ export default function ScreenShare() {
 
       try {
         frameCount++;
-        console.log(`📸 Capturing frame #${frameCount}`, {
-          videoWidth: video.videoWidth,
-          videoHeight: video.videoHeight,
-          readyState: video.readyState
-        });
+        if (frameCount % 30 === 0) { // Log every 30th frame to reduce spam
+          console.log(`📸 Capturing frame #${frameCount}`, {
+            videoWidth: video.videoWidth,
+            videoHeight: video.videoHeight,
+            readyState: video.readyState
+          });
+        }
 
         // Set canvas dimensions to match video
         canvas.width = video.videoWidth;
@@ -177,7 +179,9 @@ export default function ScreenShare() {
         // Convert canvas to blob and send to server
         canvas.toBlob(async (blob) => {
           if (blob && isSharing) {
-            console.log(`📤 Sending frame #${frameCount}, size: ${blob.size} bytes`);
+            if (frameCount % 30 === 0) { // Log every 30th frame
+              console.log(`📤 Sending frame #${frameCount}, size: ${blob.size} bytes`);
+            }
             
             const formData = new FormData();
             formData.append('frame', blob);
@@ -190,7 +194,9 @@ export default function ScreenShare() {
               });
               
               if (response.ok) {
-                console.log(`✅ Frame #${frameCount} sent successfully`);
+                if (frameCount % 30 === 0) {
+                  console.log(`✅ Frame #${frameCount} sent successfully`);
+                }
               } else {
                 console.error(`❌ Frame #${frameCount} failed:`, response.status);
               }
@@ -198,7 +204,9 @@ export default function ScreenShare() {
               console.error(`❌ Failed to send frame #${frameCount}:`, error);
             }
           } else {
-            console.warn(`⚠️ Skipping frame #${frameCount} - no blob or not sharing`);
+            if (frameCount % 30 === 0) {
+              console.warn(`⚠️ Skipping frame #${frameCount} - no blob or not sharing`);
+            }
           }
         }, 'image/jpeg', settings.quality / 100);
       } catch (error) {
@@ -207,7 +215,7 @@ export default function ScreenShare() {
     };
 
     // Start frame capture interval
-    const intervalMs = 1000 / settings.fps;
+    const intervalMs = Math.max(33, 1000 / settings.fps); // Minimum 33ms (30 FPS max)
     console.log(`⏱️ Starting frame interval: ${intervalMs}ms (${settings.fps} FPS)`);
     frameIntervalRef.current = setInterval(sendFrame, intervalMs);
   };
@@ -463,7 +471,7 @@ export default function ScreenShare() {
   }, []);
 
   useEffect(() => {
-    if (!isConnected) {
+    if (!isConnected || !currentSharer) {
       console.log('⚠️ Not connected, skipping polling');
       return;
     }
@@ -481,7 +489,7 @@ export default function ScreenShare() {
       console.log('🛑 Clearing polling interval');
       clearInterval(pollInterval);
     };
-  }, [isConnected, isSharing, currentSharer, userId]);
+  }, [isConnected, currentSharer, isSharing, userId]);
 
   useEffect(() => {
     if (chatMessagesRef.current) {
