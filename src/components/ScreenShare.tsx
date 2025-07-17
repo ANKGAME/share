@@ -161,13 +161,11 @@ export default function ScreenShare() {
 
       try {
         frameCount++;
-        if (frameCount % 30 === 0) { // Log every 30th frame to reduce spam
-          console.log(`📸 Capturing frame #${frameCount}`, {
-            videoWidth: video.videoWidth,
-            videoHeight: video.videoHeight,
-            readyState: video.readyState
-          });
-        }
+        console.log(`📸 Capturing frame #${frameCount}`, {
+          videoWidth: video.videoWidth,
+          videoHeight: video.videoHeight,
+          readyState: video.readyState
+        });
 
         // Set canvas dimensions to match video
         canvas.width = video.videoWidth;
@@ -179,9 +177,7 @@ export default function ScreenShare() {
         // Convert canvas to blob and send to server
         canvas.toBlob(async (blob) => {
           if (blob && isSharing) {
-            if (frameCount % 30 === 0) { // Log every 30th frame
-              console.log(`📤 Sending frame #${frameCount}, size: ${blob.size} bytes`);
-            }
+            console.log(`📤 Sending frame #${frameCount}, size: ${blob.size} bytes`);
             
             const formData = new FormData();
             formData.append('frame', blob);
@@ -194,9 +190,7 @@ export default function ScreenShare() {
               });
               
               if (response.ok) {
-                if (frameCount % 30 === 0) {
-                  console.log(`✅ Frame #${frameCount} sent successfully`);
-                }
+                console.log(`✅ Frame #${frameCount} sent successfully`);
               } else {
                 console.error(`❌ Frame #${frameCount} failed:`, response.status);
               }
@@ -204,9 +198,7 @@ export default function ScreenShare() {
               console.error(`❌ Failed to send frame #${frameCount}:`, error);
             }
           } else {
-            if (frameCount % 30 === 0) {
-              console.warn(`⚠️ Skipping frame #${frameCount} - no blob or not sharing`);
-            }
+            console.warn(`⚠️ Skipping frame #${frameCount} - no blob or not sharing`);
           }
         }, 'image/jpeg', settings.quality / 100);
       } catch (error) {
@@ -215,7 +207,7 @@ export default function ScreenShare() {
     };
 
     // Start frame capture interval
-    const intervalMs = Math.max(33, 1000 / settings.fps); // Minimum 33ms (30 FPS max)
+    const intervalMs = 1000 / settings.fps;
     console.log(`⏱️ Starting frame interval: ${intervalMs}ms (${settings.fps} FPS)`);
     frameIntervalRef.current = setInterval(sendFrame, intervalMs);
   };
@@ -471,7 +463,7 @@ export default function ScreenShare() {
   }, []);
 
   useEffect(() => {
-    if (!isConnected || !currentSharer) {
+    if (!isConnected) {
       console.log('⚠️ Not connected, skipping polling');
       return;
     }
@@ -489,7 +481,7 @@ export default function ScreenShare() {
       console.log('🛑 Clearing polling interval');
       clearInterval(pollInterval);
     };
-  }, [isConnected, currentSharer, isSharing, userId]);
+  }, [isConnected, isSharing, currentSharer, userId]);
 
   useEffect(() => {
     if (chatMessagesRef.current) {
@@ -575,9 +567,9 @@ export default function ScreenShare() {
                   // Show shared screen from server when someone else is sharing
                   <img
                     ref={sharedImageRef}
-                    className="max-w-full max-h-[500px] object-contain rounded-lg"
+                    className="max-w-full max-h-[500px] object-contain"
                     alt="Shared screen"
-                    style={{ display: 'none', backgroundColor: '#000' }}
+                    style={{ display: 'none' }}
                     onLoad={() => console.log('🖼️ Shared image loaded')}
                     onError={(e) => console.error('❌ Shared image error:', e)}
                   />
@@ -590,7 +582,7 @@ export default function ScreenShare() {
                   </div>
                 )}
                 
-                {(isSharing || (currentSharer && sharedImageRef.current?.style.display !== 'none')) && (
+                {(isSharing || currentSharer) && (
                   <button 
                     onClick={toggleFullscreen}
                     className="absolute top-4 right-4 bg-black/50 hover:bg-black/70 text-white p-2 rounded-lg transition-colors"
