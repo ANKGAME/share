@@ -158,29 +158,60 @@ export default function ScreenShareApp() {
   }, [roomId, isInRoom, userId]);
 
   const createPeerConnection = useCallback((participantId: string) => {
+    console.log(`🔗 [WEBRTC] Creating peer connection for participant: ${participantId}`);
     const pc = new RTCPeerConnection(rtcConfig);
     
     pc.onicecandidate = (event) => {
       if (event.candidate) {
+        console.log(`🧊 [ICE] Sending ICE candidate to ${participantId}:`, event.candidate.candidate);
         sendSignal(participantId, {
           type: 'ice-candidate',
           candidate: event.candidate
         });
+      } else {
+        console.log(`🧊 [ICE] ICE gathering complete for ${participantId}`);
       }
     };
 
     pc.ontrack = (event) => {
-      console.log('Received remote stream from', participantId);
+      console.log(`📺 [WEBRTC] Received remote stream from ${participantId}:`, {
+        streams: event.streams.length,
+        track: {
+          kind: event.track.kind,
+          label: event.track.label,
+          enabled: event.track.enabled,
+          readyState: event.track.readyState
+        }
+      });
+      
       if (remoteVideoRef.current) {
+        console.log(`🎥 [WEBRTC] Setting remote video srcObject for ${participantId}`);
         remoteVideoRef.current.srcObject = event.streams[0];
+        remoteVideoRef.current.play().catch(error => {
+          console.error(`❌ [WEBRTC] Failed to play remote video from ${participantId}:`, error);
+        });
       }
     };
 
+    pc.onconnectionstatechange = () => {
+      console.log(`🔗 [WEBRTC] Connection state changed for ${participantId}:`, pc.connectionState);
+    };
+    
+    pc.oniceconnectionstatechange = () => {
+      console.log(`🧊 [ICE] ICE connection state changed for ${participantId}:`, pc.iceConnectionState);
+    };
+    
+    pc.onicegatheringstatechange = () => {
+      console.log(`🧊 [ICE] ICE gathering state changed for ${participantId}:`, pc.iceGatheringState);
+    };
+
     pc.ondatachannel = (event) => {
+      console.log(`💬 [DATA_CHANNEL] Received data channel from ${participantId}`);
       const channel = event.channel;
       channel.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.type === 'chat') {
+          console.log(`💬 [CHAT] Received message from ${participantId}:`, data.message.text);
           handleChatMessage(data.message);
         }
       };
@@ -188,44 +219,60 @@ export default function ScreenShareApp() {
     };
 
     peerConnectionsRef.current.set(participantId, pc);
+    console.log(`✅ [WEBRTC] Peer connection created for ${participantId}`);
     return pc;
   }, [sendSignal]);
 
   const handleOffer = async (from: string, offer: RTCSessionDescriptionInit) => {
+    console.log(`📥 [WEBRTC] Handling offer from ${from}`);
     const pc = createPeerConnection(from);
     await pc.setRemoteDescription(offer);
+    console.log(`✅ [WEBRTC] Set remote description for ${from}`);
     
     if (localStreamRef.current) {
+      console.log(`➕ [WEBRTC] Adding local stream tracks to peer connection for ${from}`);
       localStreamRef.current.getTracks().forEach(track => {
+        console.log(`➕ [WEBRTC] Adding track: ${track.kind} - ${track.label}`);
         pc.addTrack(track, localStreamRef.current!);
       });
     }
 
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
+    console.log(`📤 [WEBRTC] Sending answer to ${from}`);
     sendSignal(from, { type: 'answer', ...answer });
   };
 
   const handleAnswer = async (from: string, answer: RTCSessionDescriptionInit) => {
+    console.log(`📥 [WEBRTC] Handling answer from ${from}`);
     const pc = peerConnectionsRef.current.get(from);
     if (pc) {
       await pc.setRemoteDescription(answer);
+      console.log(`✅ [WEBRTC] Set remote description (answer) for ${from}`);
+    } else {
+      console.error(`❌ [WEBRTC] No peer connection found for ${from} when handling answer`);
     }
   };
 
   const handleIceCandidate = async (from: string, candidateData: any) => {
+    console.log(`🧊 [ICE] Handling ICE candidate from ${from}:`, candidateData.candidate.candidate);
     const pc = peerConnectionsRef.current.get(from);
     if (pc) {
       await pc.addIceCandidate(candidateData.candidate);
+      console.log(`✅ [ICE] Added ICE candidate for ${from}`);
+    } else {
+      console.error(`❌ [ICE] No peer connection found for ${from} when handling ICE candidate`);
     }
   };
 
   const handleUserJoined = (user: Participant) => {
+    console.log(`👤 [USER] User joined:`, user);
     setParticipants(prev => new Map(prev.set(user.id, user)));
     setIsConnected(true);
   };
 
   const handleUserLeft = (userId: string) => {
+    console.log(`👤 [USER] User left: ${userId}`);
     setParticipants(prev => {
       const newMap = new Map(prev);
       newMap.delete(userId);
@@ -235,6 +282,7 @@ export default function ScreenShareApp() {
     // Clean up peer connection
     const pc = peerConnectionsRef.current.get(userId);
     if (pc) {
+      console.log(`🔗 [WEBRTC] Closing peer connection for ${userId}`);
       pc.close();
       peerConnectionsRef.current.delete(userId);
     }
@@ -243,12 +291,14 @@ export default function ScreenShareApp() {
   };
 
   const handleChatMessage = (message: Message) => {
+    console.log(`💬 [CHAT] Adding message:`, message);
     setMessages(prev => [...prev, message]);
   };
 
   const joinRoom = async () => {
     if (!roomId.trim() || !userName.trim()) return;
 
+    console.log(`🚪 [ROOM] Joining room: ${roomId} as ${userName}`);
     setIsInRoom(true);
     setShowJoinModal(false);
     setIsConnected(true);
@@ -261,8 +311,10 @@ export default function ScreenShareApp() {
     };
     
     setParticipants(prev => new Map(prev.set(userId, selfParticipant)));
+    console.log(`👤 [ROOM] Added self to participants`);
 
     // Announce joining to other participants
+    console.log(`📢 [SIGNALING] Broadcasting user joined`);
     broadcastSignal({
       type: 'user-joined',
       user: selfParticipant
@@ -270,8 +322,10 @@ export default function ScreenShareApp() {
 
     // Load existing participants from localStorage
     const existingParticipants = JSON.parse(localStorage.getItem(`participants_${roomId}`) || '[]');
+    console.log(`👥 [ROOM] Found ${existingParticipants.length} existing participants`);
     existingParticipants.forEach((p: Participant) => {
       if (p.id !== userId) {
+        console.log(`👤 [ROOM] Adding existing participant: ${p.name}`);
         setParticipants(prev => new Map(prev.set(p.id, p)));
       }
     });
@@ -279,6 +333,7 @@ export default function ScreenShareApp() {
     // Save self to localStorage
     const allParticipants = [...existingParticipants.filter((p: Participant) => p.id !== userId), selfParticipant];
     localStorage.setItem(`participants_${roomId}`, JSON.stringify(allParticipants));
+    console.log(`💾 [ROOM] Saved participants to localStorage`);
   };
 
   const leaveRoom = () => {
@@ -314,9 +369,11 @@ export default function ScreenShareApp() {
   };
 
   const startScreenShare = async () => {
+    console.log('🎬 [SCREEN_SHARE] Starting screen share process...');
     try {
       const constraints: DisplayMediaStreamConstraints = {
         video: {
+          mediaSource: 'screen',
           frameRate: settings.fps,
           width: { ideal: 1920 },
           height: { ideal: 1080 }
@@ -324,66 +381,153 @@ export default function ScreenShareApp() {
         audio: settings.audioEnabled
       };
 
+      console.log('🎯 [SCREEN_SHARE] Requesting display media with constraints:', constraints);
       const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
+      console.log('✅ [SCREEN_SHARE] Got display media stream:', {
+        id: stream.id,
+        active: stream.active,
+        tracks: stream.getTracks().map(track => ({
+          kind: track.kind,
+          label: track.label,
+          enabled: track.enabled,
+          readyState: track.readyState,
+          settings: track.getSettings()
+        }))
+      });
+      
       localStreamRef.current = stream;
 
       if (localVideoRef.current) {
+        console.log('🎥 [SCREEN_SHARE] Setting video element srcObject...');
         localVideoRef.current.srcObject = stream;
+        localVideoRef.current.muted = true;
+        localVideoRef.current.playsInline = true;
+        localVideoRef.current.autoplay = true;
+        
+        // Force play the video
+        try {
+          await localVideoRef.current.play();
+          console.log('▶️ [SCREEN_SHARE] Video element playing successfully');
+        } catch (playError) {
+          console.error('❌ [SCREEN_SHARE] Video play error:', playError);
+        }
       }
 
       // Add stream to all peer connections
       peerConnectionsRef.current.forEach(async (pc, participantId) => {
+        console.log(`🔗 [WEBRTC] Adding stream to peer connection for participant: ${participantId}`);
         // Remove existing tracks
-        pc.getSenders().forEach(sender => pc.removeTrack(sender));
+        const senders = pc.getSenders();
+        console.log(`🗑️ [WEBRTC] Removing ${senders.length} existing senders`);
+        senders.forEach(sender => {
+          if (sender.track) {
+            pc.removeTrack(sender);
+          }
+        });
         
         // Add new tracks
-        stream.getTracks().forEach(track => {
-          pc.addTrack(track, stream);
+        stream.getTracks().forEach((track, index) => {
+          console.log(`➕ [WEBRTC] Adding track ${index + 1}/${stream.getTracks().length}:`, {
+            kind: track.kind,
+            label: track.label,
+            enabled: track.enabled,
+            readyState: track.readyState
+          });
+          const sender = pc.addTrack(track, stream);
+          console.log('✅ [WEBRTC] Track added, sender:', sender);
         });
 
         // Create new offer
+        console.log(`📤 [WEBRTC] Creating offer for participant: ${participantId}`);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        console.log(`📡 [WEBRTC] Sending offer to participant: ${participantId}`);
         sendSignal(participantId, { type: 'offer', ...offer });
       });
 
       setIsPresenting(true);
       setCurrentPresenter(userId);
       setShowShareModal(false);
+      
+      console.log('✅ [SCREEN_SHARE] Screen sharing setup complete');
 
       // Announce presentation start
+      console.log('📢 [SIGNALING] Broadcasting presentation start');
       broadcastSignal({
         type: 'presentation-started'
       });
 
       // Handle stream end
-      stream.getVideoTracks()[0].addEventListener('ended', () => {
-        stopScreenShare();
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.addEventListener('ended', () => {
+          console.log('🛑 [SCREEN_SHARE] Video track ended, stopping share');
+          stopScreenShare();
+        });
+      }
+      
+      // Add additional event listeners for debugging
+      stream.getTracks().forEach((track, index) => {
+        track.addEventListener('ended', () => {
+          console.log(`🛑 [TRACK] Track ${index} (${track.kind}) ended`);
+        });
+        track.addEventListener('mute', () => {
+          console.log(`🔇 [TRACK] Track ${index} (${track.kind}) muted`);
+        });
+        track.addEventListener('unmute', () => {
+          console.log(`🔊 [TRACK] Track ${index} (${track.kind}) unmuted`);
+        });
       });
 
     } catch (error) {
-      console.error('Failed to start screen sharing:', error);
-      alert('Failed to start screen sharing. Please try again.');
+      console.error('❌ [SCREEN_SHARE] Failed to start screen sharing:', error);
+      
+      let errorMessage = 'Failed to start screen sharing. ';
+      if (error instanceof Error) {
+        if (error.name === 'NotAllowedError') {
+          errorMessage += 'Permission denied. Please allow screen sharing and try again.';
+        } else if (error.name === 'NotSupportedError') {
+          errorMessage += 'Screen sharing is not supported in this browser.';
+        } else if (error.name === 'NotFoundError') {
+          errorMessage += 'No screen sharing source found.';
+        } else {
+          errorMessage += `Error: ${error.message}`;
+        }
+      }
+      
+      alert(errorMessage);
+      setShowShareModal(false);
     }
   };
 
   const stopScreenShare = () => {
+    console.log('🛑 [SCREEN_SHARE] Stopping screen share...');
+    
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
+      console.log('🛑 [SCREEN_SHARE] Stopping all tracks...');
+      localStreamRef.current.getTracks().forEach((track, index) => {
+        console.log(`🛑 [TRACK] Stopping track ${index}: ${track.kind} - ${track.label}`);
+        track.stop();
+      });
       localStreamRef.current = null;
     }
 
     if (localVideoRef.current) {
+      console.log('🎥 [SCREEN_SHARE] Clearing video element');
       localVideoRef.current.srcObject = null;
     }
 
     setIsPresenting(false);
     setCurrentPresenter(null);
+    
+    console.log('📢 [SIGNALING] Broadcasting presentation stop');
 
     // Announce presentation stop
     broadcastSignal({
       type: 'presentation-stopped'
     });
+    
+    console.log('✅ [SCREEN_SHARE] Screen sharing stopped successfully');
   };
 
   const sendChatMessage = () => {
@@ -589,6 +733,12 @@ export default function ScreenShareApp() {
                     muted
                     playsInline
                     className="max-w-full max-h-[500px] object-contain"
+                    onLoadedMetadata={() => console.log('🎥 [VIDEO] Local video metadata loaded')}
+                    onPlay={() => console.log('▶️ [VIDEO] Local video started playing')}
+                    onPause={() => console.log('⏸️ [VIDEO] Local video paused')}
+                    onError={(e) => console.error('❌ [VIDEO] Local video error:', e)}
+                    onLoadStart={() => console.log('🔄 [VIDEO] Local video load started')}
+                    onCanPlay={() => console.log('✅ [VIDEO] Local video can play')}
                   />
                 ) : currentPresenter ? (
                   <video
@@ -596,6 +746,12 @@ export default function ScreenShareApp() {
                     autoPlay
                     playsInline
                     className="max-w-full max-h-[500px] object-contain"
+                    onLoadedMetadata={() => console.log('🎥 [VIDEO] Remote video metadata loaded')}
+                    onPlay={() => console.log('▶️ [VIDEO] Remote video started playing')}
+                    onPause={() => console.log('⏸️ [VIDEO] Remote video paused')}
+                    onError={(e) => console.error('❌ [VIDEO] Remote video error:', e)}
+                    onLoadStart={() => console.log('🔄 [VIDEO] Remote video load started')}
+                    onCanPlay={() => console.log('✅ [VIDEO] Remote video can play')}
                   />
                 ) : (
                   <div className="text-gray-400 text-center">
