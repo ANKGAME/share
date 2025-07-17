@@ -161,11 +161,13 @@ export default function ScreenShare() {
 
       try {
         frameCount++;
-        console.log(`📸 Capturing frame #${frameCount}`, {
-          videoWidth: video.videoWidth,
-          videoHeight: video.videoHeight,
-          readyState: video.readyState
-        });
+        if (frameCount % 30 === 0) { // Log every 30th frame to reduce spam
+          console.log(`📸 Capturing frame #${frameCount}`, {
+            videoWidth: video.videoWidth,
+            videoHeight: video.videoHeight,
+            readyState: video.readyState
+          });
+        }
 
         // Set canvas dimensions to match video
         canvas.width = video.videoWidth;
@@ -177,7 +179,9 @@ export default function ScreenShare() {
         // Convert canvas to blob and send to server
         canvas.toBlob(async (blob) => {
           if (blob && isSharing) {
-            console.log(`📤 Sending frame #${frameCount}, size: ${blob.size} bytes`);
+            if (frameCount % 30 === 0) { // Log every 30th frame
+              console.log(`📤 Sending frame #${frameCount}, size: ${blob.size} bytes`);
+            }
             
             const formData = new FormData();
             formData.append('frame', blob);
@@ -190,7 +194,9 @@ export default function ScreenShare() {
               });
               
               if (response.ok) {
-                console.log(`✅ Frame #${frameCount} sent successfully`);
+                if (frameCount % 30 === 0) {
+                  console.log(`✅ Frame #${frameCount} sent successfully`);
+                }
               } else {
                 console.error(`❌ Frame #${frameCount} failed:`, response.status);
               }
@@ -198,7 +204,9 @@ export default function ScreenShare() {
               console.error(`❌ Failed to send frame #${frameCount}:`, error);
             }
           } else {
-            console.warn(`⚠️ Skipping frame #${frameCount} - no blob or not sharing`);
+            if (frameCount % 30 === 0) {
+              console.warn(`⚠️ Skipping frame #${frameCount} - no blob or not sharing`);
+            }
           }
         }, 'image/jpeg', settings.quality / 100);
       } catch (error) {
@@ -207,7 +215,7 @@ export default function ScreenShare() {
     };
 
     // Start frame capture interval
-    const intervalMs = 1000 / settings.fps;
+    const intervalMs = Math.max(33, 1000 / settings.fps); // Minimum 33ms (30 FPS max)
     console.log(`⏱️ Starting frame interval: ${intervalMs}ms (${settings.fps} FPS)`);
     frameIntervalRef.current = setInterval(sendFrame, intervalMs);
   };
@@ -384,7 +392,14 @@ export default function ScreenShare() {
   const loadSharedScreen = async () => {
     if (currentSharer && currentSharer !== userId && sharedImageRef.current) {
       try {
-        const response = await fetch(`http://localhost:8080/api/frame?t=${Date.now()}`);
+        const response = await fetch(`http://localhost:8080/api/frame?t=${Date.now()}`, {
+          cache: 'no-cache',
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+          }
+        });
         if (response.ok) {
           const blob = await response.blob();
           if (blob.size > 0) {
@@ -392,15 +407,28 @@ export default function ScreenShare() {
             const url = URL.createObjectURL(blob);
             sharedImageRef.current.src = url;
             sharedImageRef.current.style.display = 'block';
+            sharedImageRef.current.onload = () => {
+              console.log('✅ Image loaded successfully');
+            };
+            sharedImageRef.current.onerror = (e) => {
+              console.error('❌ Image load error:', e);
+            };
             
             // Clean up previous URL after a delay
             setTimeout(() => URL.revokeObjectURL(url), 1000);
           } else {
             console.log('⚠️ Empty frame received');
+            sharedImageRef.current.style.display = 'none';
           }
+        } else {
+          console.log('⚠️ Frame request failed:', response.status);
+          sharedImageRef.current.style.display = 'none';
         }
       } catch (error) {
         console.error('❌ Failed to load shared screen:', error);
+        if (sharedImageRef.current) {
+          sharedImageRef.current.style.display = 'none';
+        }
       }
     }
   };
@@ -443,26 +471,24 @@ export default function ScreenShare() {
   }, []);
 
   useEffect(() => {
-    if (!isConnected) {
+    if (!isConnected || !currentSharer) {
       console.log('⚠️ Not connected, skipping polling');
       return;
     }
 
     console.log('⏰ Starting polling intervals...');
-    const pollInterval = setInterval(() => {
+    const pollInterval = setInterval(async () => {
       updateUsers();
       updateMessages();
-      if (!isSharing) {
-        loadSharedScreen();
+      if (!isSharing && currentSharer && currentSharer !== userId) {
+        await loadSharedScreen();
       }
-    }, 500); // Faster polling for better real-time experience
+    }, 200); // Even faster polling for smoother video
 
     return () => {
       console.log('🛑 Clearing polling interval');
       clearInterval(pollInterval);
     };
-  }, [isConnected, isSharing]);
-
   useEffect(() => {
     if (chatMessagesRef.current) {
       chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
@@ -547,9 +573,9 @@ export default function ScreenShare() {
                   // Show shared screen from server when someone else is sharing
                   <img
                     ref={sharedImageRef}
-                    className="max-w-full max-h-[500px] object-contain"
+                    className="max-w-full max-h-[500px] object-contain rounded-lg"
                     alt="Shared screen"
-                    style={{ display: 'none' }}
+                    style={{ display: 'none', backgroundColor: '#000' }}
                     onLoad={() => console.log('🖼️ Shared image loaded')}
                     onError={(e) => console.error('❌ Shared image error:', e)}
                   />
@@ -562,7 +588,7 @@ export default function ScreenShare() {
                   </div>
                 )}
                 
-                {(isSharing || currentSharer) && (
+                {(isSharing || (currentSharer && sharedImageRef.current?.style.display !== 'none')) && (
                   <button 
                     onClick={toggleFullscreen}
                     className="absolute top-4 right-4 bg-black/50 hover:bg-black/70 text-white p-2 rounded-lg transition-colors"
